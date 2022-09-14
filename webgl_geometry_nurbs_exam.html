@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - geometry - NURBS</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				background-color: #f0f0f0;
+				color: #444;
+				margin: auto;
+			}
+			a {
+				color: #08f;
+			}
+		</style>
+		<script type="text/javascript" src="../utils/dat.gui.js"></script>
+	</head>
+	<body>
+		<!-- Import maps polyfill -->
+		<!-- Remove this when import maps will be widely supported -->
+		<script async src="https://unpkg.com/es-module-shims@1.3.6/dist/es-module-shims.js"></script>
+		
+
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "../build/three.module.js"
+				}
+			}
+		</script>
+
+		<script type="module">
+
+			import * as THREE from 'three';
+
+			import Stats from './jsm/libs/stats.module.js';
+
+			import { NURBSCurve } from './jsm/curves/NURBSCurve.js';
+			import { ParametricGeometry } from './jsm/geometries/ParametricGeometry.js';
+			import { OrbitControls } from './jsm/controls/OrbitControls.js';
+			import { OBJLoader } from './jsm/loaders/OBJLoader.js';
+			import { MTLLoader } from './jsm/loaders/MTLLoader.js';
+
+			let container, stats;
+
+			let camera, scene, renderer;
+			let group;
+
+			let targetRotation = 0;
+			let targetRotationOnPointerDown = 0;
+
+			let pointerX = 0;
+			let pointerXOnPointerDown = 0;
+
+			let windowHalfX = window.innerWidth / 2;
+
+			var cube, nrbC, asteroide; 
+			var npt=400; 
+			var step=0
+
+			var FFobject = [ ]; 
+			var FFMatrix = new THREE.Matrix4();
+
+			var nurbsLine;
+			var cubePov = false;
+			var followCameraUp = false;
+			var extensionX = 20; //0.75;
+			var extensionY = 20; //0.75
+			var extensionZ = 20; //0.5
+			let cameraControls; 
+
+			init();
+			animate();
+
+			function setupControls() {
+
+				var controls = new function () {
+					this.followCamera = false;
+					this.followCameraUp = false;
+					this.scaleX = 20; //0.75
+					this.scaleY = 20; //0.75
+					this.scaleZ = 20; //0.5
+					this.npt = 800
+				};
+
+				var gui = new dat.GUI();
+
+				gui.add(controls, 'scaleX', 0, 200).onChange(function (e) {
+					extensionX = e;
+					drawCurve();
+				});
+
+				gui.add(controls, 'scaleY', 0, 200).onChange(function (e) {
+					extensionY = e;
+					drawCurve();
+				});
+
+				gui.add(controls, 'scaleZ', 0, 200).onChange(function (e) {
+					extensionZ = e;
+					drawCurve();
+				});
+
+				gui.add(controls, 'npt', 200, 5000).onFinishChange(function (e) {
+					npt = e;
+					step=0
+					drawCurve();
+				});
+
+				gui.add(controls, 'followCamera').onFinishChange(function (e) {
+					cubePov = e;
+				});
+
+				gui.add(controls, 'followCameraUp').onFinishChange(function (e) {
+					followCameraUp = e;
+				});
+
+				return controls;
+			}
+    
+			function drawCurve() {
+
+				if (nurbsLine != null) group.remove( nurbsLine );
+
+				const nurbsDegree = 5; 
+				const nurbsKnots=[0,0,0,0,0,0,0.25,0.5,0.75,1,1,1,1,1,1]; 
+
+				const cp = [
+					extensionX,0,-extensionZ,1, 
+					extensionX,extensionY,-extensionZ,1, 
+					-extensionX,extensionY,extensionZ*2,1, 
+					-extensionX,extensionY,extensionZ*2,1, 
+					-extensionX,0,-extensionZ*3,0.75, 
+					-extensionX,-extensionY,extensionZ*2,1, 
+					-extensionX,-extensionY,extensionZ*2,1, 
+					extensionX,-extensionY,-extensionZ,1, 
+					extensionX,0,-extensionZ,1]; 
+
+				var nurbsControlPoints = [ ];
+
+				var dim = nurbsKnots.length-(nurbsDegree+1); //dimensione dello spazio
+				var j=0; for ( let i = 0; i <= dim-1; i ++ ) { 
+					nurbsControlPoints.push(new THREE.Vector4(cp[j],cp[j+1],cp[j+2],cp[j+3]) ); 
+					j=j+4;
+				}
+
+				const nurbsCurve = new NURBSCurve( nurbsDegree, nurbsKnots, nurbsControlPoints );
+
+				const nurbsGeometry = new THREE.BufferGeometry();
+				nrbC = nurbsCurve.getPoints( npt ); 
+				nurbsGeometry.setFromPoints( nrbC );
+
+				var dst=[ ]; 
+				for (var i=0; i<=npt; i++) { 
+					dst[i]=i/npt; 
+					FFobject[i]=nurbsCurve.computeFrenetFrames2(dst[i]);
+				}
+
+				const nurbsMaterial = new THREE.LineBasicMaterial( { color: 0xFF3333 } );
+
+				nurbsLine = new THREE.Line( nurbsGeometry, nurbsMaterial );
+
+				group.add( nurbsLine );
+			}
+
+
+
+			function init() {
+
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				var controls = setupControls();
+
+				camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 1, 2000 );
+				camera.position.set( 50, 50, 10 );
+
+				camera.up.x = 0; 
+				camera.up.y = 0; 
+				camera.up.z = 1; 
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0xf0f0f0 );
+				scene.add( new THREE.AmbientLight( 0x808080 ) );
+
+				camera.lookAt(scene.position);
+
+				const light = new THREE.DirectionalLight( 0xffffff, 1 );
+				light.position.set( 1, 1, 1 );
+				scene.add( light );
+
+				group = new THREE.Group();
+				scene.add( group );
+
+				drawCurve();
+
+				var OBJFile = 'myData/Asteroide2.obj';
+				var MTLFile = 'myData/Asteroide2.mtl';
+				var JPGFile = 'myData/img/Rock026_1K_Color.jpg';
+				var JPGFileNormal = 'myData/img/Rock026_1K_NormalGL.jpg';
+				var JPGFileRoghness = 'myData/img/Rock026_1K_Roughness.jpg';
+
+				var texture = new THREE.TextureLoader().load(JPGFile);
+				var normalTexture = new THREE.TextureLoader().load(JPGFileNormal);
+				var roughnessTexture = new THREE.TextureLoader().load(JPGFileRoghness);
+
+				new MTLLoader()
+					.load(MTLFile, function (materials) {
+						materials.preload();
+						new OBJLoader()
+							.setMaterials(materials)
+							.load(OBJFile, function (object) {
+
+								asteroide = object
+								asteroide.position.y = 0;
+
+								asteroide.traverse(function (child) {
+									if (child instanceof THREE.Mesh) {
+										child.material.map = texture;
+										child.normalMap = normalTexture
+										child.roughnessMap = roughnessTexture
+										
+									}
+								});
+								scene.add(asteroide);
+							});
+					});
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				container.appendChild( renderer.domElement );
+
+				stats = new Stats();
+				container.appendChild( stats.dom );
+
+				container.style.touchAction = 'none';
+				
+				window.addEventListener( 'resize', onWindowResize );
+
+				cameraControls = new OrbitControls( camera, renderer.domElement ); 
+				cameraControls.addEventListener( 'change', render );
+
+				var skyboxGeo = new THREE.BoxGeometry(1000, 1000, 1000);
+
+				const skyTexture = new THREE.TextureLoader().load("myData/img/jw.jpg")
+				var sky = new THREE.MeshBasicMaterial({map: skyTexture});
+				var sbMaterials = [
+					sky,
+					sky,
+					sky,
+					sky,
+					sky,
+					sky
+				];
+
+				// Per illuminare il cubo internamente
+				for (var i = 0; i < sbMaterials.length; ++i) sbMaterials[i].side = THREE.BackSide;
+
+
+    			var skybox = new THREE.Mesh(skyboxGeo, sbMaterials);
+    			scene.add(skybox);
+			}
+
+			function onWindowResize() {
+
+				windowHalfX = window.innerWidth / 2;
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function onPointerUp() {
+
+				if ( event.isPrimary === false ) return;
+
+				document.removeEventListener( 'pointermove', onPointerMove );
+				document.removeEventListener( 'pointerup', onPointerUp );
+
+			}
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				render();
+				stats.update();
+
+			}
+
+			function render() {
+
+				FFMatrix.fromArray([
+					FFobject[step].tangents.x,
+					FFobject[step].tangents.y, 
+					FFobject[step].tangents.z,
+					0, 
+					FFobject[step].normals.x,
+					FFobject[step].normals.y, 
+					FFobject[step].normals.z,
+					0, 
+					FFobject[step].binormals.x,
+					FFobject[step].binormals.y, 
+					FFobject[step].binormals.z,
+					0, 
+					nrbC[step].x,
+					nrbC[step].y,
+					nrbC[step].z,
+					1
+				]);
+
+				if (asteroide != undefined) {
+					asteroide.matrix.copy(FFMatrix); 
+					asteroide.matrixAutoUpdate = false;
+				}
+
+				if (cubePov) {
+
+					camera.position.set(
+						nrbC[step].x-FFobject[step].tangents.x*20, 
+						nrbC[step].y-FFobject[step].tangents.y*20, 
+						nrbC[step].z-FFobject[step].tangents.z*20);
+					
+					camera.lookAt(
+						nrbC[step].x, 
+						nrbC[step].y,
+						nrbC[step].z)
+
+					if (followCameraUp) camera.up.set(
+						FFobject[step].normals.x, 
+						FFobject[step].normals.y, 
+						FFobject[step].normals.z)
+
+					else camera.up = new THREE.Vector3(0,0,1);
+
+					cameraControls.addEventListener( 'change', function(){} );
+
+
+				}
+
+				step += 1; 
+				if (step>=npt) step=0;
+				renderer.render( scene, camera );
+
+			}
+
+		</script>
+
+	</body>
+</html>
